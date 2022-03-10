@@ -1,0 +1,342 @@
+---
+title: "Spotify Songs Analysis"
+author: "Ersan Kucukoglu"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The majority of music fans listen to tracks on Spotify. It is one of the most popular streaming platforms. It includes almost 50 million pieces of music that users may search for using various parameters like artists, albums, genres, or playlists. I've been using Spotify for the last two years and it's my favorite music app for obvious reasons like large song libraries and no advertising. The motivation of this article is to enable anyone to discover patterns and insights about the music that they listen to. In this project, I will analyze the Spotify songs dataset to find out the relationship between song characteristics, the most popular songs, and artists, comparison on the playlist genres etc. 
+
+>It is published on [RPubs](https://rpubs.com/ersan_kucukoglu/spotify_songs)
+
+# Setup
+
+```{r,message=FALSE,warning=FALSE}
+
+#import the packages
+library(data.table)
+library(tidyverse)
+library(RColorBrewer)
+library(modelsummary)
+library(gganimate)
+library(ggpubr)
+library(ggridges)
+library(scales)
+library(corrplot)
+
+#create a ccustom theme
+theme_ersan <- function(){ 
+    font <- "Georgia"   #assign font family up front
+    
+    theme_classic() %+replace%    #replace elements we want to change
+    
+    theme(
+      
+      #grid elements
+      panel.grid.major = element_blank(),    #strip major gridlines
+      panel.grid.minor = element_blank(),    #strip minor gridlines
+      axis.ticks = element_blank(),          #strip axis ticks
+      
+      #text elements
+      plot.title = element_text(             #title
+                   family = font,            #set font family
+                   size = 17,                #set font size
+                   face = 'bold',            #bold typeface
+                   hjust = 0,                #left align
+                   vjust = 2),               #raise slightly
+      
+      plot.subtitle = element_text(          #subtitle
+                   family = font,            #font family
+                   size = 14),               #font size
+      
+      plot.caption = element_text(           #caption
+                   family = font,            #font family
+                   size = 9,                 #font size
+                   hjust = 1),               #right align
+      
+      axis.title = element_text(             #axis titles
+                   family = font,            #font family
+                   size = 10),               #font size
+      
+      axis.text = element_text(              #axis text
+                   family = font,            #axis famuly
+                   size = 9),                #font size
+      
+      axis.text.x = element_text(            #margin for axis text
+                    margin=margin(5, b = 10))
+      
+    )
+}
+```
+
+# Data
+
+For this project I used a dataset about [Spotify Songs](https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv') from the GitHub page of the [TidyTuesday project](https://github.com/rfordatascience/tidytuesday). The dataset has 32833 observations and 23 variables. Data dictionary can be found [here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-01-21/readme.md). 
+
+```{r,,message=FALSE,warning=FALSE}
+#load the data
+spotify <- fread("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv")
+```
+
+# Spotify Analysis
+
+After doing some data visualizarion for EDA, I am going to investigate my questions regarding to the Spotify songs data, which are; Which are the most popular playlist genres based on the average track popularity? What are the most popular 20 tracks in 2020? Who are the most popular 10 artists by years? How daceability and valence of the song is affected by tempo? Distribution of Valence for Songs of Different Genres. Firstly, I've checked the frequency by playlist genre. As you can see in the table, the number of observation for each genre are very close. The majority song genre is edm (18.41 %).
+```{r,message=FALSE,warning=FALSE}
+###################
+#look at data
+#glimpse(spotify)
+
+# save the track_album_release_date as a date
+spotify$track_album_release_date <- as.Date(spotify$track_album_release_date)
+
+#extract the year
+spotify$year <- as.numeric(format(spotify$track_album_release_date, "%Y"))
+
+#take the mean of the track popularity
+mean_popularity<- mean(spotify$track_popularity)
+
+#convert the duration ms to min
+spotify$duration_min <- spotify$duration_ms/60000
+
+# check frequency by playlist_genre
+datasummary( playlist_genre ~ N + Percent() , data = spotify)
+
+# Summary statistics  
+P95 <- function(x){ quantile(x,.95,na.rm=T)}
+datasummary(track_popularity + danceability + energy + speechiness + acousticness + 
+               instrumentalness + liveness + valence + tempo + duration_min  ~ 
+               Mean + SD + Min +  Max + Median + P95 + N , data = spotify,
+             title = 'Descriptives of Spotify Songs' ) %>% 
+  kableExtra::kable_styling(latex_options = c("hold_position","striped"))
+```
+
+On the Descriptive Spotify Songs table, you can see some stats for variables like the average duration of the track is 3.76 min and the average track popularity is 42.48 out of 100. Also, you can see the track popularity (song Popularity (0-100) where higher is better) distribution for each genre. All genre types have almost normal distribution, track popularity around 40-50. 
+
+```{r,message=FALSE,warning=FALSE}
+# distribution of the track popularity
+ggplot(spotify,aes(x=track_popularity,color = playlist_genre))+
+geom_histogram(bins=20)+
+    facet_wrap(~playlist_genre) +
+    theme_ersan()+
+  labs(x = "Track Popularity",
+       title = "The Distribution of the Track Popularity")+
+  theme(legend.position = "none")
+```
+
+After getting a glimpse of the audio features, I would like to understand the correlation between the popularity of the songs and the audio features of the songs by using a correlation matrix. There is a high positive correlation between energy and loudness. There is a positive correlation between danceability and valence. There is a strong negative correlation between energy and acousticness. There is a strong positive correlation between energy and loudness. There is a high negative correlation between loudness and acousticness. Surprisingly, there is a negative correlation between danceability and tempo and a weak positive correlation between energy and tempo.
+```{r,,message=FALSE,warning=FALSE}
+corr_plot_song_features_data <- spotify %>% 
+  select(track_popularity, acousticness, danceability, energy, instrumentalness, liveness, loudness, speechiness, tempo, valence)
+corrplot(cor(corr_plot_song_features_data), 
+         method = "color",  
+         type = "upper", 
+         order = "hclust")
+         
+```
+ 
+  Let's also check the energy of the songs.Energy is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy. For example, death metal has high energy, while a Bach prelude scores low on the scale. Perceptual features contributing to this attribute include dynamic range, perceived loudness, timbre, onset rate, and general entropy. As you can see on the plot, we can say that most of the songs have high energy, more than 0.5. 
+```{r}
+# distribution of energy
+ggplot(spotify,aes(x=energy))+
+geom_histogram(aes(y = ..density..), bins = 30, colour= "black", fill = "white") +
+  geom_density(fill="blue", alpha = .2) +
+      theme_ersan()+
+  labs(x = "Energy",
+       title = "The Distribution of the Energy")
+```
+
+Speechiness detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book, poetry), the closer to 1.0 the attribute value. Values above 0.66 describe tracks that are probably made entirely of spoken words. Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such cases as rap music. Values below 0.33 most likely represent music and other non-speech-like tracks. 
+In this boxplot, as we can estimate rap music has the most highest speechiness score.
+```{r,message=FALSE,warning=FALSE}
+ggplot(data = spotify, mapping = aes(x = playlist_genre, y=speechiness, fill=playlist_genre, alpha=0.05)) +
+  geom_boxplot()+
+  theme_ersan()+
+  theme(legend.position = "none")+
+  labs(x = "Playlist Genres",
+       y = "Speechiness",
+       title = "Distribution of Speechiness by using boxpplot")
+```
+
+A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic. In this scatter plot, I wanted to see the relationship between the energy and acousticness properties of the songs. I can conclude from the plot that acoustic songs has low energy. I can also say from this that most of the songs are not acoustic and their energy is high so above average.
+```{r,message=FALSE,warning=FALSE}
+
+ggplot(spotify, mapping = aes(x = acousticness, y = energy)) +
+  geom_point(aes(color=playlist_genre)) + geom_smooth(se=F) +
+  theme_ersan() + 
+  theme(legend.title = element_blank(),
+        legend.position = "top")+
+  labs(x = "Acousticness",
+       y = "Energy",
+       title = "Association between Energy and Acousticness ")
+                                                                      
+```
+
+## Which are the most popular playlist genres based on the average track popularity?
+In this plot, you can see the most popular playlist genre bar plot based on their average track popularity scores. Pop is the most popular one while rock, r&b and edm are under the average popularity line in this dataset.
+```{r,message=FALSE,warning=FALSE}
+###################
+#Data Visualization
+# 1) The most popular playlist genres by average popularity
+genre_by_popularity <- spotify[,.(avg_popularity=mean(track_popularity)),by=playlist_genre][order(desc(avg_popularity))]
+
+p1 <- ggplot(genre_by_popularity ,aes(x=reorder(playlist_genre,-avg_popularity),y=avg_popularity))+geom_col(aes(fill=playlist_genre))+
+  geom_text(aes(label = round(avg_popularity,2)), color = "black", size = 3,vjust = -1)+
+  labs(x="Playlist Genre",y="Average Popularity 0-100",
+    caption="Source: tidytuesday:spotify_songs",
+       title="The most popular playlist genres by average popularity")+
+  theme_ersan() +
+  theme(axis.text = element_text(color="black"),
+        axis.title = element_blank(),
+        legend.position = "none")+
+  geom_hline(yintercept=mean_popularity, color="grey40", linetype=3)+
+  annotate(
+    "text",
+    y = mean_popularity+6 ,x=6,
+    label = "The\naverage\npopularity",
+    vjust = 1, size = 3, color = "grey40")
+p1
+
+```
+
+## What are the most popular 20 tracks in 2020?
+We are looking the top 20 songs in 20220 in this dataset. Since the track popularity variable has values between 0 and 100, which measures songs' performance I decided to order them according to track popularity.
+```{r,message=FALSE,warning=FALSE}
+#########################################################
+## top 20 by track popularity
+top20 <- spotify[year==2020,.(song=unique(track_name)),by=track_popularity][order(desc(track_popularity))][1:20]
+
+p2 <- ggplot(top20, aes(x = track_popularity, y = reorder(song,track_popularity), color = track_popularity)) +
+  geom_point(size = 4) +
+  geom_segment(aes(xend = 10, yend = song), size = 2)+
+  geom_text(aes(label = track_popularity), color = "white", size = 2)+
+  scale_x_continuous("", expand = c(0, 0), limits = c(0, 105), position = "top") +
+  scale_color_gradientn(colors = brewer.pal(5, "RdYlBu")[-(2:4)])+
+  labs(caption="Source: tidytuesday:spotify_songs",
+       title="The most popular 20 songs in 2020 ")+
+  theme_ersan() +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "none")+
+  geom_vline(xintercept=mean_popularity, color="grey40", linetype=3)+
+  annotate(
+    "text",
+    x = mean_popularity+5 , y = 5.5,
+    label = "The\naverage\npopularity",
+    vjust = 1, size = 3, color = "grey40")+
+  annotate(
+    "curve",
+    x =mean_popularity +5 , y = 5.5,
+    xend = mean_popularity, yend = 7.5,
+    arrow = arrow(length = unit(0.2, "cm"), type = "closed"),
+    color = "grey40"
+  )
+p2
+```
+
+## Who are the most popular 10 artists by years?
+After finding the most popular songs, let's check the track artist variable in the dataset. First, I created average popularity and average energy of songs for each artist by year. I decided to take average of these values to determine the popularity of the singer. As a result, you can see the top 10 artists by years on the animation.
+```{r,message=FALSE,warning=FALSE}
+#########################################################
+## top 10 artists
+top_artists <- spotify[,.(avg_pop=mean(track_popularity),
+                          avg_energy=mean(energy)*100),
+                       by=.(track_artist,year)][order((year))]
+
+top_artists <- top_artists[,.(popularity=round(avg_pop*0.5 + avg_energy*0.5)),
+                           by=.(track_artist,year)][order(desc(year))]
+
+top_artists_formatted <- top_artists %>%
+  group_by(year) %>%
+  mutate(rank = rank(-popularity)) %>%
+  group_by(track_artist) %>% 
+  filter(rank <=10) %>%
+  ungroup()
+
+p3 <- ggplot(top_artists_formatted, aes(rank, group = track_artist, 
+                                       fill = as.factor(track_artist), color = as.factor(track_artist))) +
+  geom_tile(aes(y = popularity/2,
+                height = popularity,
+                width = 0.9), alpha = 0.8, color = NA) +
+  geom_text(aes(y = 0, label = paste(track_artist, " ")), vjust = 0.2, hjust = 1) +
+  geom_text(aes(y=popularity,label=popularity, hjust=0)) +
+  coord_flip(clip = "off", expand = FALSE) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_reverse() +
+  guides(color = FALSE, fill = FALSE) + 
+  theme_ersan()+
+  theme(axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.grid.major.x = element_line( size=.1, color="grey" ),
+        panel.grid.minor.x = element_line( size=.1, color="grey" ),
+        plot.title=element_text(size=20, hjust=0, face="bold", colour="grey", vjust=1.5),
+        plot.subtitle=element_text(size=15, hjust=0, face="italic", color="grey",vjust=1),
+        plot.caption =element_text(size=8, hjust=1, face="italic", color="grey"),
+        plot.background=element_blank(),
+        plot.margin = margin(2,2, 2, 4, "cm"))
+
+anim = p3 + transition_states(year, transition_length = 2, state_length = 1) +
+  view_follow(fixed_x = TRUE)  +
+  labs(title = 'Top 10 Artists',  
+       subtitle  =  "Year : {closest_state}",
+       caption  = "tidytuesday:spotify_songs")
+anim
+
+```
+
+## How daceability of the song is affected by tempo?
+Danceability describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.  The overall estimated tempo of a track in beats per minute (BPM). On this plot, you can see the association between tempo and danceability. It is very interesting that the tempo between 100 bpm and 150 bpm is a crucial point. Danceability decreases as the regression line broke between these two points. that is, the danceability of the songs is between 100 and 150, the ideal tempo. 
+```{r,message=FALSE,warning=FALSE}
+#########################################################
+# check the association between the tempo and danceability
+# how danceability is changing based on the tempo?
+# which range is the best tempo for the highest danceability?
+tempovs<- spotify[,.(track_name,playlist_genre,track_popularity,danceability,energy,liveness,valence,tempo)][order(track_popularity)]
+
+p4 <- ggplot(tempovs,aes(tempo,danceability))+geom_point(alpha=0.1)+
+  geom_smooth(method = "loess",se=F,aes(color=playlist_genre))+
+  theme_ersan()+
+  theme(plot.title=element_text(size=15, hjust=0, face="bold"))+
+  labs(title = "tempo vs. danceability")+ylim(0,1)
+p4
+```
+
+## Distribution of Valence for Songs of Different Genres
+In this plot you can see the different types of music genres and their distribution on the valence variable.A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry). Latin music is the happiest music genre in this dataset, the edm songs are mostly distriburted to the left , between 0 and 0.5 while the others are neutral in terms of positiveness.
+```{r,message=FALSE,warning=FALSE}
+genre_by_valence <- spotify[,.(track_name,track_album_name,playlist_genre,valence),by=year][order(year)]
+
+p5 <- ggplot(genre_by_valence,aes(x = valence, y=playlist_genre, fill = playlist_genre))+stat_density_ridges(quantile_lines = TRUE, quantiles = 2)+
+  theme_ersan()+
+  theme(legend.position = "none") + 
+  labs(x = "Valence (positiveness)",
+       y = "Music Genre",
+       title = "Distribution of Valence for Songs of Different Genres")
+p5
+
+```
+
+# Summary
+In this project, I used datasets from TidyTuesday projects to create useful data visualizations. I began by reviewing the descriptives and brief data visualizations for EDA. After becoming familiar with the data, I attempted to address my queries about the Spotify music data using attractive graphs. So, I've created some data visualizations, which are at the basis of this project.
+
+
